@@ -1,0 +1,73 @@
+name: CI/CD - Front Despacho
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: 230074771520.dkr.ecr.us-east-1.amazonaws.com
+  EKS_CLUSTER_NAME: innovatech-cluster
+  K8S_NAMESPACE: innovatech
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar credenciales AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login en Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & push imagen (front-despacho)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/front-despacho:latest
+            ${{ env.ECR_REGISTRY }}/front-despacho:${{ github.sha }}
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configurar credenciales AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Actualizar kubeconfig del clúster EKS
+        run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+
+      # No aplica ningún yaml: asume que el Deployment "front-despacho" y
+      # los Service "back-ventas"/"back-despachos" ya existen en el clúster
+      # (aplicados localmente por ti). Solo actualiza la imagen y refresca
+      # las URLs públicas de los backends por si el LoadBalancer cambió.
+      - name: Resolver URLs públicas de los backends
+        run: |
+          resolve_host () {
+            kubectl get svc "$1" -n ${{ env.K8S_NAMESPACE }} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null
+          }
+          echo "BACK_VENTAS_HOST=$(resolve_host back-ventas)" >> "$GITHUB_ENV"
+          echo "BACK_DESPACHOS_HOST=$(resolve_host back-despachos)" >> "$GITHUB_ENV"
+
+      - name: Actualizar imagen y URLs de front-despacho
+        run: |
+          kubectl set image deployment/front-despacho front-despacho=${{ env.ECR_REGISTRY }}/front-despacho:${{ github.sha }} -n ${{ env.K8S_NAMESPACE }}
+          if [ -n "${{ env.BACK_VENTAS_HOST }}" ] && [ -n "${{ env.BACK_DESPACHOS_HOST }}" ]; then
+            kubectl set env deployment/front-despacho -n ${{ env.K8S_NAMESPACE }} \
+              BACK_VENTAS_URL="http://${{ env.BACK_VENTAS_HOST }}:8080" \
+              BACK_DESPACHOS_URL="http://${{ env.BACK_DESPACHOS_HOST }}:8081"
+          fi
+          kubectl rollout status deployment/front-despacho -n ${{ env.K8S_NAMESPACE }} --timeout=180s
