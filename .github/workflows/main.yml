@@ -8,7 +8,7 @@ on:
 env:
   AWS_REGION: us-east-1
   ECR_REGISTRY: 230074771520.dkr.ecr.us-east-1.amazonaws.com
-  EKS_CLUSTER_NAME: innovatech-cluster
+  EKS_CLUSTER_NAME: eks-p4
   K8S_NAMESPACE: innovatech
 
 jobs:
@@ -34,8 +34,8 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ env.ECR_REGISTRY }}/front-despacho:latest
-            ${{ env.ECR_REGISTRY }}/front-despacho:${{ github.sha }}
+            ${{ env.ECR_REGISTRY }}/rd-front-despacho:latest
+            ${{ env.ECR_REGISTRY }}/rd-front-despacho:${{ github.sha }}
 
   deploy:
     needs: build-and-push
@@ -44,9 +44,9 @@ jobs:
       - name: Configurar credenciales AWS
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws_region: ${{ env.AWS_REGION }}
 
       - name: Actualizar kubeconfig del clúster EKS
         run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
@@ -65,10 +65,10 @@ jobs:
 
       - name: Actualizar imagen y URLs de front-despacho
         run: |
-          kubectl set image deployment/front-despacho front-despacho=${{ env.ECR_REGISTRY }}/front-despacho:${{ github.sha }} -n ${{ env.K8S_NAMESPACE }}
+          kubectl set image deployment/rd-front-despacho rd-front-despacho=${{ env.ECR_REGISTRY }}/rd-front-despacho:${{ github.sha }} -n ${{ env.K8S_NAMESPACE }}
           if [ -n "${{ env.BACK_VENTAS_HOST }}" ] && [ -n "${{ env.BACK_DESPACHOS_HOST }}" ]; then
-            kubectl set env deployment/front-despacho -n ${{ env.K8S_NAMESPACE }} \
+            kubectl set env deployment/rd-front-despacho -n ${{ env.K8S_NAMESPACE }} \
               BACK_VENTAS_URL="http://${{ env.BACK_VENTAS_HOST }}:8080" \
               BACK_DESPACHOS_URL="http://${{ env.BACK_DESPACHOS_HOST }}:8081"
           fi
-          kubectl rollout status deployment/front-despacho -n ${{ env.K8S_NAMESPACE }} --timeout=180s
+          kubectl rollout status deployment/rd-front-despacho -n ${{ env.K8S_NAMESPACE }} --timeout=180s
